@@ -27,14 +27,16 @@
 
 ### 🧠 方式一：安装 sing-box 节点（主程序）
 
-```bash
+```
 bash <(curl -fsSL https://raw.githubusercontent.com/hansvlss/sing-box-vps/main/singbox-4in1.sh)
 
+```
 ### 🖥️ 方式二：安装 Web 面板（可选）
 
-```bash
+```
 bash <(curl -fsSL https://raw.githubusercontent.com/hansvlss/sing-box-vps/main/sb-panel.sh)
 
+```
 面板功能包括：
 	•	📈 实时监控：CPU / 内存 / 磁盘 / 网络速率 / 流量统计
 	•	🔐 展示 TLS 证书信息（颁发者、到期时间、签名算法等）
