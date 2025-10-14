@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install sing-box 4-in-1 (vmess/ws, vless/reality, trojan, hysteria2) + nginx sub.txt
+# sing-box 4-in-1 (vmess/ws, vless/reality, trojan, hysteria2) + nginx sub.txt
 # Usage: bash /root/install-singbox-4in1.sh -d your.domain.tld [--hy2-obfs on|off]
 set -euo pipefail
 
