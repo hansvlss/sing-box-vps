@@ -39,7 +39,7 @@
 bash <(curl -fsSL https://raw.githubusercontent.com/hansvlss/sing-box-vps/main/singbox-4in1.sh)
 
 ```
-### 🖥️ 方式二：安装 Web 面板（可选）
+### 🖥️ 方式二：安装 Web 管理面板（可选）
 
 ```
 bash <(curl -fsSL https://raw.githubusercontent.com/hansvlss/sing-box-vps/main/singbox_panel.sh)
