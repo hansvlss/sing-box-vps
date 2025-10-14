@@ -1,4 +1,4 @@
-# 🚀 sing-box-vps 一键部署与管理脚本
+# 🚀 Sing-box VPS 一键四协议部署与可视化管理脚本（VPS 专用）
 
 ![GitHub repo size](https://img.shields.io/github/repo-size/hansvlss/sing-box-vps?color=blue)
 ![GitHub last commit](https://img.shields.io/github/last-commit/hansvlss/sing-box-vps?color=brightgreen)
@@ -11,21 +11,29 @@
 
 ---
 
-## 🧭 项目简介
+## 一、项目简介
 
-**sing-box-vps** 是一个用于 VPS 环境的自动化安装与管理脚本集合，帮助你：
-
-- 🧩 快速部署 **sing-box 4in1 节点服务**（支持 VLESS / VMESS / Trojan / Hysteria2）
-- 🔐 自动申请与续期 **Let's Encrypt TLS 证书**
-- ⚙️ 支持一键启动、重启、开机自启 **systemd 服务**
-- 📊 可选安装 **Web 可视化面板**（实时显示 CPU、内存、磁盘、带宽、证书信息等）
-- 🪶 纯 Bash 编写，无任何依赖语言，完全本地执行
+本项目提供 **一键四协议节点部署** 与 **Web 管理面板安装** 两大核心功能。  
+支持在 **Debian / Ubuntu / CentOS / IPv4 / IPv6 / 双栈 VPS** 上快速搭建 sing-box 服务端，  
+自动签发 HTTPS 证书，生成订阅链接，并支持网页端实时监控 VPS 状态与流量。
 
 ---
 
-## ⚡️ 一键安装脚本
+## 二、主要特性
 
-### 🧠 方式一：安装 sing-box 节点（主程序）
+- ✅ 一键部署四协议：**VLESS / VMESS / Trojan / Hysteria2**
+- 🔐 自动申请与续期 **Let's Encrypt TLS** 证书
+- ⚙️ 自带 systemd 服务：支持启动、停止、重启、开机自启
+- 📊 可选安装 Web 可视化面板（实时监控 CPU / 内存 / 磁盘 / 网络流量）
+- 📋 一键复制节点订阅信息（VLESS / VMESS / Trojan / Hysteria2）
+- 🌍 支持 IPv6 / IPv4 / 双栈 VPS、arm64 与 x86_64 架构
+- 🪶 纯 Bash 实现，无需数据库，轻量高效
+- 🧱 面板页面通过 HTTPS + JSON 文件实时更新，无缓存干扰
+
+---
+
+## 三、安装方法
+### 🧠 方式一：安装 sing-box 四协议节点（主程序）
 
 ```
 bash <(curl -fsSL https://raw.githubusercontent.com/hansvlss/sing-box-vps/main/singbox-4in1.sh)
