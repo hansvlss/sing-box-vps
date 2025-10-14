@@ -28,4 +28,9 @@
 ### 🧠 方式一：安装 sing-box 节点（主程序）
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/hansvlss/sing-box-vps/main/sing-box.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/hansvlss/sing-box-vps/main/singbox-4in1.sh)
+
+### 🧠 方式二：安装 WEB管理面板）
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/hansvlss/sing-box-vps/main/sb-panel.sh)
