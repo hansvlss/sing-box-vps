@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# sing-box 4-in-1 (vmess/xhttp-h2, vless/reality, trojan(h2-ready), hysteria2) + nginx sub.txt
+# sing-box 4-in-1 (vmess/ws, vless/reality, trojan, hysteria2) + nginx sub.txt
 # Usage: bash /root/install-singbox-4in1.sh -d your.domain.tld [--hy2-obfs on|off]
 set -euo pipefail
+
+# make word-splitting safer per user's request
 IFS=$' \n\t'
 
 # ---------- 参数解析 ----------
@@ -16,60 +18,69 @@ USG
   exit 1
 }
 
+# basic argument parse
 while [[ ${#} -gt 0 ]]; do
   case "$1" in
-    -d|--domain) DOMAIN="${2:-}"; shift 2 ;;
-    --hy2-obfs)  HY2_OBFS="${2:-off}"; shift 2 ;;
-    -h|--help)   usage ;;
-    *) echo "未知参数: $1"; usage ;;
+    -d|--domain)
+      DOMAIN="${2:-}"
+      shift 2
+      ;;
+    --hy2-obfs)
+      HY2_OBFS="${2:-off}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      ;;
+    *)
+      echo "未知参数: $1"
+      usage
+      ;;
   esac
 done
 
-[[ -z "${DOMAIN}" ]] && { echo "必须指定域名 -d your.domain.tld"; usage; }
-[[ "${HY2_OBFS}" != "on" && "${HY2_OBFS}" != "off" ]] && { echo "--hy2-obfs must be 'on' or 'off'"; exit 1; }
+if [[ -z "${DOMAIN}" ]]; then
+  echo "必须指定域名 -d your.domain.tld"
+  usage
+fi
+
+if [[ "${HY2_OBFS}" != "on" && "${HY2_OBFS}" != "off" ]]; then
+  echo "--hy2-obfs must be 'on' or 'off'"
+  exit 1
+fi
 
 echo "[START] domain=${DOMAIN}  hy2-obfs=${HY2_OBFS}"
-[[ $EUID -ne 0 ]] && { echo "请使用 root 用户运行"; exit 1; }
+
+# ---------- 环境检查 ----------
+if [[ $EUID -ne 0 ]]; then
+  echo "请使用 root 用户运行"
+  exit 1
+fi
+
+# avoid interactive apt prompts
 export DEBIAN_FRONTEND=noninteractive
 
-# ---------- 基础依赖 ----------
 echo "[STEP] apt update && install base deps"
 apt-get update -y
-DEPS=(curl wget jq nginx python3 python3-pip ufw unzip tar openssl tmux tcpdump dos2unix socat net-tools iptables)
+DEPS=(curl wget jq nginx python3 python3-pip ufw unzip tar openssl tmux tcpdump dos2unix socat net-tools)
 apt-get install -y "${DEPS[@]}"
 
 install -d /etc/sing-box
 WEB_ROOT="/var/www/singbox"; install -d "$WEB_ROOT"
 
-# ---------- 内核调优（BBR / fq / MTU probing / 可选 MSS） ----------
-echo "[STEP] kernel tune (BBR/fq/MTU probing)"
-append_sysctl(){
-  local k v; k="$1"; v="$2"
-  if ! grep -q "^[[:space:]]*${k}=" /etc/sysctl.conf 2>/dev/null; then
-    echo "${k}=${v}" >> /etc/sysctl.conf
-  else
-    sed -i "s#^[[:space:]]*${k}=.*#${k}=${v}#g" /etc/sysctl.conf
-  fi
-}
-append_sysctl net.core.default_qdisc fq
-append_sysctl net.ipv4.tcp_congestion_control bbr
-append_sysctl net.ipv4.tcp_mtu_probing 1
-sysctl -p || true
-
-# 如跨网高丢包可放开 MSS 固定（默认注释，按需开启）
-# iptables -t mangle -C OUTPUT  -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1400 2>/dev/null || iptables -t mangle -A OUTPUT  -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1400
-# iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1400 2>/dev/null || iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1400
-
-# ---------- 安装 sing-box ----------
+# ---------- 安装 sing-box（鲁棒下载） ----------
 install_singbox() {
   echo "[STEP] Install sing-box"
   set +e
-  case "$(uname -m)" in
+  ARCH="$(uname -m)"
+  case "$ARCH" in
     x86_64|amd64) SB_ARCH="linux-amd64" ;;
     aarch64|arm64) SB_ARCH="linux-arm64" ;;
     armv7l) SB_ARCH="linux-armv7" ;;
     *) SB_ARCH="linux-amd64" ;;
   esac
+
+  # 固定已验证版本（可按需修改）
   V="v1.12.9"
   FNAME="sing-box-${V#v}-${SB_ARCH}.tar.gz"
   URLS=(
@@ -77,60 +88,100 @@ install_singbox() {
     "https://ghproxy.com/https://github.com/SagerNet/sing-box/releases/download/${V}/${FNAME}"
     "https://download.fastgit.org/SagerNet/sing-box/releases/download/${V}/${FNAME}"
   )
-  TMPDIR="$(mktemp -d)"; TGZ="$TMPDIR/sb.tgz"; ok=0
+
+  TMPDIR="$(mktemp -d)"
+  TGZ="$TMPDIR/sb.tgz"
+  downloaded=0
   for u in "${URLS[@]}"; do
     echo "[INFO] try download: $u"
     if curl -fsSL4 --connect-timeout 15 -o "$TGZ" "$u"; then
-      if head -c 2 "$TGZ" | od -An -tx1 | tr -d ' \n' | grep -q '^1f8b'; then ok=1; break; else rm -f "$TGZ"; fi
+      # quick check: gzip magic
+      if head -c 2 "$TGZ" | od -An -tx1 | tr -d ' \n' | grep -q '^1f8b'; then
+        downloaded=1
+        break
+      else
+        echo "[WARN] downloaded file is not gzip, maybe HTML error page"
+        rm -f "$TGZ"
+      fi
+    else
+      echo "[WARN] download failed for $u"
     fi
   done
-  [[ $ok -eq 1 ]] || { echo "[ERROR] all downloads failed"; rm -rf "$TMPDIR"; exit 1; }
+
+  if [[ $downloaded -ne 1 ]]; then
+    echo "[ERROR] all downloads failed"
+    rm -rf "$TMPDIR"
+    exit 1
+  fi
+
   tar -xzf "$TGZ" -C "$TMPDIR"
   SB_BIN=$(find "$TMPDIR" -type f -name sing-box -print -quit)
-  [[ -n "$SB_BIN" ]] || { echo "[ERROR] sing-box binary not found"; rm -rf "$TMPDIR"; exit 1; }
+  if [[ -z "$SB_BIN" ]]; then
+    echo "[ERROR] sing-box binary not found in archive"
+    rm -rf "$TMPDIR"
+    exit 1
+  fi
   install -m 755 "$SB_BIN" /usr/local/bin/sing-box
   /usr/local/bin/sing-box version || true
-  rm -rf "$TMPDIR"; set -e
+  rm -rf "$TMPDIR"
+  set -e
 }
+
 install_singbox
 
-# ---------- 证书（ACME 优先，自签兜底） ----------
+# ---------- 证书（ACME 优先，限额或失败则自签） ----------
 CERT_DIR="/etc/sing-box"
-CERT="$CERT_DIR/cert.pem"; KEY="$CERT_DIR/key.pem"
+CERT="$CERT_DIR/cert.pem"
+KEY="$CERT_DIR/key.pem"
 
 issue_cert() {
   echo "[STEP] Issue cert: ACME preferred, fallback self-signed"
+  # ensure port 80 free for standalone
   systemctl stop nginx >/dev/null 2>&1 || true
   ufw allow 80/tcp || true
+
   if [[ ! -x "${HOME}/.acme.sh/acme.sh" ]]; then
     echo "[INFO] install acme.sh"
     curl -fsSL https://get.acme.sh | sh -s email=admin@"${DOMAIN}" || true
   fi
+
+  # set LE
   "${HOME}/.acme.sh/acme.sh" --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
-  command -v socat >/dev/null 2>&1 || apt-get install -y socat
+
+  # ensure socat present for acme standalone if needed
+  if ! command -v socat >/dev/null 2>&1; then
+    apt-get install -y socat
+  fi
+
   set +e
   "${HOME}/.acme.sh/acme.sh" --issue -d "${DOMAIN}" --standalone -k ec-256 --force
-  ret=$?; set -e
+  ret=$?
+  set -e
+
   if [[ $ret -eq 0 ]]; then
     ACMEDIR="${HOME}/.acme.sh/${DOMAIN}_ecc"
     if [[ -f "${ACMEDIR}/${DOMAIN}.key" && -f "${ACMEDIR}/fullchain.cer" ]]; then
       install -m 600 "${ACMEDIR}/${DOMAIN}.key" "$KEY"
       install -m 644 "${ACMEDIR}/fullchain.cer" "$CERT"
-      echo "[OK] ACME 成功"; return 0
+      echo "[OK] ACME 成功"
+      return 0
     else
-      echo "[WARN] acme files missing, fallback self-signed"
+      echo "[WARN] acme issued but files missing, fallback to self-signed"
     fi
   else
-    echo "[WARN] ACME failed or rate-limited, fallback self-signed"
+    echo "[WARN] ACME failed or rate-limited, fallback to self-signed"
   fi
+
+  # fallback self-signed 1 year
   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -sha256 -days 365 \
     -subj "/CN=${DOMAIN}" -nodes -keyout "$KEY" -out "$CERT"
   chmod 600 "$KEY"; chmod 644 "$CERT"
   echo "[OK] self-signed cert generated"
 }
+
 issue_cert
 
-# ---------- 生成凭据 ----------
+# ---------- 生成凭据并写入 /root/sb.env ----------
 echo "[STEP] Generate credentials"
 UUID=$(/usr/local/bin/sing-box generate uuid)
 TROJAN_PWD=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 18 || true)
@@ -138,14 +189,17 @@ WS_PATH="ws-$(tr -dc a-z0-9 </dev/urandom | head -c 6 || true)"
 HY2_PWD=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 18 || true)
 HY2_OBFS_STR=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16 || true)
 
+# Reality keypair: avoid SIGPIPE by writing to temp file then reading
 TMP_REALITY="$(mktemp)"
 if /usr/local/bin/sing-box generate reality-keypair >"$TMP_REALITY" 2>/dev/null; then
   REALITY_PRIVATE=$(awk -F': +' '/[Pp]rivate/ {print $2; exit}' "$TMP_REALITY" || true)
   REALITY_PUBLIC=$(awk -F': +' '/[Pp]ublic/ {print $2; exit}' "$TMP_REALITY" || true)
 else
-  REALITY_PRIVATE=""; REALITY_PUBLIC=""
+  REALITY_PRIVATE=""
+  REALITY_PUBLIC=""
 fi
 rm -f "$TMP_REALITY"
+
 REALITY_SHORTID=$(tr -dc 'a-f0-9' </dev/urandom | head -c 8 || true)
 
 umask 177
@@ -163,7 +217,7 @@ export HY2_OBFS_SWITCH="${HY2_OBFS}"
 ENV
 chmod 600 /root/sb.env
 
-# ---------- 写入 sing-box 配置（优化版） ----------
+# ---------- 写入 sing-box 配置（4 协议） ----------
 echo "[STEP] write /etc/sing-box/config.json"
 cat > /etc/sing-box/config.json <<JSON
 {
@@ -181,20 +235,17 @@ cat > /etc/sing-box/config.json <<JSON
         "certificate_path": "${CERT}",
         "key_path": "${KEY}"
       }
-      /* 如需 Trojan-H2，可打开下方传输并同时把 alpn 仅保留 "h2"
-      ,"transport": { "type": "h2", "path": "/tj-${WS_PATH}" }
-      */
     },
     {
       "type": "vmess",
       "listen": "::",
       "listen_port": 8443,
       "users": [{ "uuid": "${UUID}" }],
-      "transport": { "type": "xhttp", "path": "/${WS_PATH}" },
+      "transport": { "type": "ws", "path": "/${WS_PATH}", "headers": { "Host": "${DOMAIN}" } },
       "tls": {
         "enabled": true,
         "server_name": "${DOMAIN}",
-        "alpn": ["h2"],
+        "alpn": ["http/1.1"],
         "certificate_path": "${CERT}",
         "key_path": "${KEY}"
       }
@@ -233,26 +284,24 @@ cat > /etc/sing-box/config.json <<JSON
   ],
   "outbounds": [
     { "type": "direct", "tag": "direct" },
-    { "type": "block",  "tag": "block" }
+    { "type": "block", "tag": "block" }
   ],
   "route": { "final": "direct" }
 }
 JSON
 
-# 如果开启 HY2 obfs，则注入 obfs 字段
+# 如果开启 HY2 obfs，则用 jq 在 config 中插入 obfs 字段（不破坏原文件）
 if [[ "${HY2_OBFS}" == "on" && -n "${HY2_OBFS_STR}" ]]; then
   tmpf="$(mktemp)"
-  jq --arg ob "${HY2_OBFS_STR}" \
-     '(.inbounds[] | select(.type=="hysteria2")) += { "obfs": {"type":"salamander", "password": $ob} }' \
-     /etc/sing-box/config.json >"$tmpf" && mv "$tmpf" /etc/sing-box/config.json
+  jq --arg ob "${HY2_OBFS_STR}" '(.inbounds[] | select(.type=="hysteria2")) += { "obfs": {"type":"salamander", "password": $ob} }' /etc/sing-box/config.json >"$tmpf" && mv "$tmpf" /etc/sing-box/config.json
 fi
 
-# 校验配置
+# 校验 sing-box 配置（非阻塞）
 if command -v /usr/local/bin/sing-box >/dev/null 2>&1; then
   /usr/local/bin/sing-box check -c /etc/sing-box/config.json || true
 fi
 
-# ---------- systemd ----------
+# ---------- systemd 单元 ----------
 cat > /etc/systemd/system/sing-box.service <<'UNIT'
 [Unit]
 Description=sing-box service
@@ -272,10 +321,10 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now sing-box || true
 
-# ---------- 订阅 sub.txt ----------
+# ---------- 生成订阅 sub.txt（从 /root/sb.env 读取，避免 KeyError） ----------
 echo "[STEP] build sub.txt"
 python3 - <<'PY' > "${WEB_ROOT}/sub.txt"
-import json, base64
+import json, base64, re
 d={}
 with open('/root/sb.env') as f:
     for line in f:
@@ -283,35 +332,34 @@ with open('/root/sb.env') as f:
         if line.startswith('export '):
             k,v=line[7:].split('=',1)
             d[k]=v.strip().strip('"')
-dom=d.get('DOMAIN',''); uuid=d.get('UUID','')
-ws=d.get('WS_PATH',''); pbk=d.get('REALITY_PUBLIC',''); sid=d.get('REALITY_SHORTID','')
-tro=d.get('TROJAN_PWD',''); hy2pwd=d.get('HY2_PWD','')
-hy2switch=d.get('HY2_OBFS_SWITCH','off'); hy2obfs=d.get('HY2_OBFS','')
+dom=d.get('DOMAIN','')
+uuid=d.get('UUID','')
+ws=d.get('WS_PATH','')
+pbk=d.get('REALITY_PUBLIC','')
+sid=d.get('REALITY_SHORTID','')
+tro=d.get('TROJAN_PWD','')
+hy2pwd=d.get('HY2_PWD','')
+hy2switch=d.get('HY2_OBFS_SWITCH','off')
+hy2obfs=d.get('HY2_OBFS','')
 
-# VMess XHTTP(H2)
-vm={"v":"2","ps":"VMESS-XHTTP-H2","add":dom,"port":"8443","id":uuid,"aid":"0",
-    "net":"xhttp","type":"none","path":"/"+ws,"tls":"tls","sni":dom}
+vm={"v":"2","ps":"VMESS-WS","add":dom,"port":"8443","id":uuid,"aid":"0",
+    "net":"ws","type":"none","host":dom,"path":"/"+ws,"tls":"tls"}
 print("vmess://"+base64.b64encode(json.dumps(vm,separators=(',',':')).encode()).decode())
 print()
-
-# VLESS Reality (Vision)
 print(f"vless://{uuid}@{dom}:8448?encryption=none&flow=xtls-rprx-vision&security=reality"
       f"&sni=www.cloudflare.com&pbk={pbk}&sid={sid}#VLESS-Reality")
 print()
-
-# Trojan TLS (ALPN h2)
 print(f"trojan://{tro}@{dom}:8444?security=tls&sni={dom}#Trojan-TLS")
 print()
-
-# Hysteria2
 if hy2switch=='on':
     print(f"hysteria2://{hy2pwd}@{dom}:8447?obfs=salamander:{hy2obfs}&alpn=h3&sni={dom}&insecure=0#Hysteria2")
 else:
     print(f"hysteria2://{hy2pwd}@{dom}:8447?alpn=h3&sni={dom}&insecure=0#Hysteria2")
 PY
+
 chmod 644 "${WEB_ROOT}/sub.txt"
 
-# ---------- Nginx 仅暴露 /sub.txt ----------
+# ---------- 配置 nginx 仅暴露 /sub.txt ----------
 echo "[STEP] configure nginx /sub.txt"
 cat > /etc/nginx/sites-available/singbox-sub.conf <<NGX
 server { listen 80; server_name ${DOMAIN}; return 301 https://\$host\$request_uri; }
@@ -327,9 +375,9 @@ NGX
 ln -sf /etc/nginx/sites-available/singbox-sub.conf /etc/nginx/sites-enabled/singbox-sub.conf
 nginx -t && systemctl restart nginx || true
 
-# ---------- UFW ----------
+# ---------- UFW 放行（非交互） ----------
 echo "[STEP] configure ufw"
-ufw allow 80/tcp  || true
+ufw allow 80/tcp || true
 ufw allow 443/tcp || true
 ufw allow 8443/tcp || true
 ufw allow 8444/tcp || true
@@ -337,7 +385,7 @@ ufw allow 8448/tcp || true
 ufw allow 8447/udp || true
 ufw --force enable || true
 
-# ---------- 自检与输出 ----------
+# ---------- 最终自检与输出 ----------
 echo
 echo "== listen ports =="
 ss -tulpen | egrep '(:443 |:8443|:8444|:8448)' || true
@@ -358,7 +406,7 @@ curl -sS --max-time 8 https://${DOMAIN}/sub.txt | sed -n '1,80p' || echo "[WARN]
 echo
 echo "==== DONE ===="
 echo "Subscription: https://${DOMAIN}/sub.txt"
-echo "VMess XHTTP(H2): ${DOMAIN}:8443   path /${WS_PATH}   UUID ${UUID}"
-echo "VLESS Reality   : ${DOMAIN}:8448   UUID ${UUID}  PBK ${REALITY_PUBLIC}  SID ${REALITY_SHORTID}"
-echo "Trojan TLS (h2) : ${DOMAIN}:8444   password ${TROJAN_PWD}"
-echo "HY2             : ${DOMAIN}:8447   password ${HY2_PWD}  obfs-switch ${HY2_OBFS}"
+echo "VMess WS : ${DOMAIN}:8443   path /${WS_PATH}   UUID ${UUID}"
+echo "VLESS RLT: ${DOMAIN}:8448   UUID ${UUID}  PBK ${REALITY_PUBLIC}  SID ${REALITY_SHORTID}"
+echo "Trojan TLS: ${DOMAIN}:8444  password ${TROJAN_PWD}"
+echo "HY2      : ${DOMAIN}:8447   password ${HY2_PWD}  obfs-switch ${HY2_OBFS}"
