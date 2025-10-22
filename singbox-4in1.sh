@@ -241,11 +241,10 @@ cat > /etc/sing-box/config.json <<JSON
   "listen": "127.0.0.1",
   "listen_port": 12080,
   "users": [{ "uuid": "${UUID}" }],
-  "transport": {
-    "type": "ws",
-    "path": "/${WS_PATH}",
-    "early_data": { "enabled": true, "max_size": 2048 }
-  }
+ "transport": {
+  "type": "ws",
+  "path": "/${WS_PATH}"
+}
 },
     {
       "type": "vless",
