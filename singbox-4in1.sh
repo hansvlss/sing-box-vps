@@ -377,6 +377,7 @@ nginx -t && systemctl restart nginx || true
 
 # ---------- UFW 放行（非交互） ----------
 echo "[STEP] configure ufw"
+ufw limit 22/tcp comment 'SSH' || true
 ufw allow 80/tcp || true
 ufw allow 443/tcp || true
 ufw allow 8443/tcp || true
