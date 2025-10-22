@@ -237,19 +237,16 @@ cat > /etc/sing-box/config.json <<JSON
       }
     },
     {
-      "type": "vmess",
-      "listen": "::",
-      "listen_port": 8443,
-      "users": [{ "uuid": "${UUID}" }],
-      "transport": { "type": "ws", "path": "/${WS_PATH}", "headers": { "Host": "${DOMAIN}" } },
-      "tls": {
-        "enabled": true,
-        "server_name": "${DOMAIN}",
-        "alpn": ["http/1.1"],
-        "certificate_path": "${CERT}",
-        "key_path": "${KEY}"
-      }
-    },
+  "type": "vmess",
+  "listen": "127.0.0.1",
+  "listen_port": 12080,
+  "users": [{ "uuid": "${UUID}" }],
+  "transport": {
+    "type": "ws",
+    "path": "/${WS_PATH}",
+    "early_data": { "enabled": true, "max_size": 2048 }
+  }
+},
     {
       "type": "vless",
       "listen": "::",
@@ -359,20 +356,48 @@ PY
 
 chmod 644 "${WEB_ROOT}/sub.txt"
 
-# ---------- 配置 nginx 仅暴露 /sub.txt ----------
-echo "[STEP] configure nginx /sub.txt"
-cat > /etc/nginx/sites-available/singbox-sub.conf <<NGX
-server { listen 80; server_name ${DOMAIN}; return 301 https://\$host\$request_uri; }
+# ---------- 配置 nginx (443 proxy for WS + /sub.txt) ----------
+echo "[STEP] configure nginx (443 proxy for WS + /sub.txt)"
+cat > /etc/nginx/sites-available/singbox-site.conf <<NGX
+server {
+  listen 80;
+  server_name ${DOMAIN};
+  return 301 https://\$host\$request_uri;
+}
+
 server {
   listen 443 ssl http2;
   server_name ${DOMAIN};
-  ssl_certificate ${CERT};
+
+  ssl_certificate     ${CERT};
   ssl_certificate_key ${KEY};
-  location = /sub.txt { root ${WEB_ROOT}; default_type text/plain; }
-  location / { return 404; }
+
+  # 订阅文件
+  location = /sub.txt {
+    root ${WEB_ROOT};
+    default_type text/plain;
+  }
+
+  # 反代到 sing-box 的本地 WS (VMess)
+  location /${WS_PATH} {
+    proxy_pass http://127.0.0.1:12080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_read_timeout 86400;
+  }
+
+  # 默认返回404，可改成伪装站点
+  location / {
+    return 404;
+  }
 }
 NGX
-ln -sf /etc/nginx/sites-available/singbox-sub.conf /etc/nginx/sites-enabled/singbox-sub.conf
+
+ln -sf /etc/nginx/sites-available/singbox-site.conf /etc/nginx/sites-enabled/singbox-site.conf
 nginx -t && systemctl restart nginx || true
 
 # ---------- UFW 放行（非交互） ----------
