@@ -338,8 +338,8 @@ hy2pwd=d.get('HY2_PWD','')
 hy2switch=d.get('HY2_OBFS_SWITCH','off')
 hy2obfs=d.get('HY2_OBFS','')
 
-vm={"v":"2","ps":"VMESS-WS","add":dom,"port":"8443","id":uuid,"aid":"0",
-    "net":"ws","type":"none","host":dom,"path":"/"+ws,"tls":"tls"}
+vm={"v":"2","ps":"VMESS-WS","add":dom,"port":"443","id":uuid,"aid":"0",
+    "net":"ws","type":"none","host":dom,"path":"/"+ws,"tls":"tls","sni":dom}
 print("vmess://"+base64.b64encode(json.dumps(vm,separators=(',',':')).encode()).decode())
 print()
 print(f"vless://{uuid}@{dom}:8448?encryption=none&flow=xtls-rprx-vision&security=reality"
