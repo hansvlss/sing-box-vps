@@ -75,12 +75,10 @@ fi
 
 LISTEN=$(ss -tulpen 2>/dev/null | awk '
 /:443 /{a["443/tcp"]=1}
-/:8443/{a["8443/tcp"]=1}
 /:8444/{a["8444/tcp"]=1}
 /:8448/{a["8448/tcp"]=1}
 END{
   printf("%s",(a["443/tcp"] ?"443=up ":"443=down "));
-  printf("%s",(a["8443/tcp"]?"8443=up ":"8443=down "));
   printf("%s",(a["8444/tcp"]?"8444=up ":"8444=down "));
   printf("%s",(a["8448/tcp"]?"8448=up ":"8448=down "));
 }')
@@ -157,9 +155,8 @@ cat >"$STATUS" <<JSON
     "not_before": "${NOT_BEFORE}",
     "not_after":  "${NOT_AFTER}"
   },
-  "ports": {
+ "ports": {
     "tcp_443":   "$(echo "$LISTEN" | grep -q '443=up'  && echo up || echo down)",
-    "tcp_8443":  "$(echo "$LISTEN" | grep -q '8443=up' && echo up || echo down)",
     "tcp_8444":  "$(echo "$LISTEN" | grep -q '8444=up' && echo up || echo down)",
     "tcp_8448":  "$(echo "$LISTEN" | grep -q '8448=up' && echo up || echo down)",
     "udp_8447":  "${UDP8447}"
