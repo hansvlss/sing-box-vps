@@ -383,24 +383,52 @@ setInterval(loadStatus, 15000);
 HTML
 chmod 644 "${PANEL_DIR}/index.html"
 
-# Nginx 站点
+# ===== 统一写入主站点：singbox-site.conf，避免与已有站点冲突 =====
+WS_PATH="ws"
+if [[ -f /root/sb.env ]]; then
+  . /root/sb.env || true
+  WS_PATH="${WS_PATH:-${WS_PATH:-ws}}"
+fi
+
+SITE_AV="/etc/nginx/sites-available/singbox-site.conf"
+SITE_EN="/etc/nginx/sites-enabled/singbox-site.conf"
+
 cat >"$SITE_AV" <<NGX
 server {
   listen 80;
   server_name ${DOMAIN};
   return 301 https://\$host\$request_uri;
 }
+
 server {
   listen 443 ssl http2;
   server_name ${DOMAIN};
-  ssl_certificate ${CERT};
+
+  ssl_certificate     ${CERT};
   ssl_certificate_key ${KEY};
+
   root ${PANEL_DIR};
   index index.html;
-  location = /sub.txt     { default_type text/plain; try_files /sub.txt =404; }
-  location = /status.json { default_type application/json; try_files /status.json =404; }
+
+  location = /sub.txt     { default_type text/plain;       add_header Cache-Control "no-store" always; try_files /sub.txt =404; }
+  location = /status.json { default_type application/json; add_header Cache-Control "no-store" always; try_files /status.json =404; }
+
+  location /${WS_PATH} {
+    proxy_pass http://127.0.0.1:12080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_read_timeout 86400;
+  }
+
+  location / { try_files \$uri /index.html =404; }
 }
 NGX
+
+rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/singbox-sub.conf 2>/dev/null || true
 ln -sf "$SITE_AV" "$SITE_EN"
 nginx -t && systemctl reload nginx
 HTML_FILE="${PANEL_DIR}/index.html"
