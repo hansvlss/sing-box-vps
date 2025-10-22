@@ -420,8 +420,8 @@ echo
 echo "== cert issuer (443 / 8444) =="
 for p in 443 8444; do
   echo --- $p ---
-  openssl s_client -connect ${DOMAIN}:$p -servername ${DOMAIN} -alpn h2 </dev/null 2>/dev/null \
-    | openssl x509 -noout -issuer -subject -dates || true
+  timeout 6 openssl s_client -connect ${DOMAIN}:$p -servername ${DOMAIN} -alpn h2 </dev/null 2>/dev/null \
+  | openssl x509 -noout -issuer -subject -dates || true
 done
 
 echo
