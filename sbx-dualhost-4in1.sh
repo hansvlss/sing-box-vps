@@ -39,6 +39,48 @@ echo "[START] WS/CDN=${WS_HOST}  DIRECT=${REAL_HOST}  HY2-OBFS=${HY2_OBFS}"
 [[ $EUID -ne 0 ]] && { echo "请用 root 运行"; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 
+# =====================================================
+# [PRECHECK] 自动检测并清理 apt/dpkg 锁冲突（防止卡死）
+# =====================================================
+echo "[CHECK] 检查 apt/dpkg 锁..."
+
+LOCKS=(
+  "/var/lib/apt/lists/lock"
+  "/var/lib/dpkg/lock-frontend"
+  "/var/cache/apt/archives/lock"
+)
+
+APT_PID=$(pgrep -f "apt|dpkg" | grep -v $$ | head -n1 || true)
+if [[ -n "$APT_PID" ]]; then
+  echo "[WARN] 检测到 apt/dpkg 进程 (PID=$APT_PID) 正在运行，等待其完成..."
+  WAIT_COUNT=0
+  while ps -p "$APT_PID" &>/dev/null; do
+    WAIT_COUNT=$((WAIT_COUNT+1))
+    if (( WAIT_COUNT > 60 )); then
+      echo "[FORCE] 等待超时，强制终止 apt 进程 $APT_PID"
+      kill -9 "$APT_PID" 2>/dev/null || true
+      break
+    fi
+    sleep 2
+  done
+fi
+
+for L in "${LOCKS[@]}"; do
+  if [[ -e "$L" ]]; then
+    echo "[CLEAN] 删除锁文件: $L"
+    rm -f "$L"
+  fi
+done
+
+echo "[FIX] 执行 dpkg --configure -a ..."
+dpkg --configure -a >/dev/null 2>&1 || true
+
+echo "[UPDATE] apt-get update -y ..."
+apt-get update -y >/dev/null 2>&1 || true
+
+echo "[OK] apt 环境检查通过。"
+echo
+
 # ---------- APT 防冲突：等待锁 + 暂停 timer ----------
 stop_apt_timers(){
   systemctl stop apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
